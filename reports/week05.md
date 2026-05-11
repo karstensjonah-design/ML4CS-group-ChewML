@@ -132,11 +132,11 @@ A second challenge was the **frequency-domain feature extraction**: choosing the
 
 ## Plan for Next Week
 
-- Record additional sessions to expand the dataset (target: 5–6 sessions per class)
+- Record additional sessions to expand the dataset 
 - Apply proper train/test split evaluation once dataset is large enough
 - Investigate the one misclassified Still session (possible recording artefact)
 - Explore feature selection to reduce dimensionality
-- Begin integrating the pipeline into the `src/` scripts for reproducibility
+- Working on the presentation
 
 ---
 
