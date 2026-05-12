@@ -25,3 +25,6 @@ results/metrics/*.csv
 # Misc
 .env
 data/raw/ziFyStZr
+
+# Claude Code assistant memory
+.claude/
