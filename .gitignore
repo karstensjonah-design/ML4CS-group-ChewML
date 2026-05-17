@@ -28,3 +28,8 @@ data/raw/ziFyStZr
 
 # Claude Code assistant memory
 .claude/
+
+# Presentation files (not ready to push)
+*.pptx
+*.ppt
+Präsentationsskript*.md
