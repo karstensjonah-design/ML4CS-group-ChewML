@@ -29,6 +29,14 @@ data/raw/ziFyStZr
 # Claude Code assistant memory
 .claude/
 
+# Laufzeit-Artefakte (Streaming-App)
+ml_httpstreaming/classification_log_*.csv
+ml_httpstreaming/sensor_data*.csv
+ml_httpstreaming/cd
+ml_httpstreaming/python
+sensor_data_*.csv
+git_push.bat
+
 # Presentation files (not ready to push)
 *.pptx
 *.ppt
