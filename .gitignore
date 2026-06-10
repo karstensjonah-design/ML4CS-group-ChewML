@@ -41,3 +41,8 @@ git_push.bat
 *.pptx
 *.ppt
 Präsentationsskript*.md
+
+# Large media files
+*.mp4
+*.mov
+*.avi
