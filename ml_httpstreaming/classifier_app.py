@@ -3,10 +3,11 @@
 Live-Essklassifikation — Hierarchisches 2-Stufen-Modell
 ========================================================
 
-Stufe 1 : Still  vs.  Essen
-Stufe 2 : Apfel / Kaugummi / Skyr / Essen (unbekannt)
+Stufe 1 : Still  vs.  Essen          (Random Forest)
+Stufe 2 : Apfel / Kaugummi / Skyr / Essen (unbekannt)   (SVM, RBF)
 
-Pipeline: 25-s-Fenster → Movement Exclusion (k=5) → Random Forest
+Pipeline: 10-s-Fenster → Feature Engineering (Kau-Dynamik) → SVM
+          (Movement Exclusion standardmäßig AUS — bewahrt Apfel-Knack-Impulse)
 
 Start: python classifier_app.py
 Stopp: Ctrl+C
@@ -27,9 +28,14 @@ from pathlib import Path
 # ── Scientific ─────────────────────────────────────────────────────────────────
 import numpy as np
 import pandas as pd
-from scipy.signal import welch
+from scipy.signal import welch, find_peaks
+from scipy.stats import kurtosis, skew
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 from sklearn.inspection import permutation_importance
+from sklearn.model_selection import GroupShuffleSplit
 
 # ── Rich (required) ────────────────────────────────────────────────────────────
 try:
@@ -60,7 +66,8 @@ MIN_WINDOW    = 8.0     # Mindestpuffer vor erster Klassifikation
 SLIDE_SECS    = 2.0     # Klassifikation alle N Sekunden
 K_MOV         = 5       # Movement Exclusion: k × Median
 CONF_S1_MIN   = 0.95    # Stufe 1: Mindest-Konfidenz für "Essen" (sonst → Still)
-MOVEMENT_EXCL = True    # Movement Exclusion standardmäßig aktiv
+MOVEMENT_EXCL = False   # Movement Exclusion standardmäßig AUS (schneidet sonst
+                        # Apfels Knack-Impulse weg → Apfel↔Essen-Verwechslung; vgl. NB-Analyse)
 
 CLASSES_RAW   = ["Apfel", "Kaugummi", "Skyr", "Still", "Essen"]
 TO_COARSE     = {c: ("Still" if c == "Still" else "Essen") for c in CLASSES_RAW}
@@ -629,6 +636,55 @@ def extract_features(df: pd.DataFrame) -> dict:
     f["chew_band_power"]    = float(cp.sum())
     f["rhythmicity"]        = f["chew_band_power"] / f["total_power"] if f["total_power"] > 0 else 0.0
     f["dominant_chew_freq"] = float(cf[np.argmax(cp)]) if len(cp) > 0 else 0.0
+
+    # ── Kau-Dynamik-Features (NB09) ────────────────────────────────────────────
+    mag = df["magnitude"].values
+    t   = df["seconds_elapsed"].values if "seconds_elapsed" in df else np.arange(len(df)) / FS
+    dur = (t[-1] - t[0]) if len(t) > 1 else 0.0
+    rms = np.sqrt(np.mean(mag**2)) if len(mag) else 0.0
+    f["mag_kurtosis"] = float(kurtosis(mag)) if len(mag) > 3 else 0.0
+    f["mag_skew"]     = float(skew(mag))     if len(mag) > 2 else 0.0
+    f["crest_factor"] = float(np.max(np.abs(mag)) / rms) if rms > 1e-9 else 0.0
+    if len(mag) > 2:
+        jerk = np.diff(mag) * FS
+        f["jerk_mean"] = float(np.mean(np.abs(jerk)))
+        f["jerk_std"]  = float(np.std(jerk))
+    else:
+        f["jerk_mean"] = f["jerk_std"] = 0.0
+    for k in ["spectral_entropy", "spectral_centroid", "spectral_bandwidth",
+              "band_power_slow", "band_power_mid", "band_power_fast", "high_freq_power"]:
+        f[k] = 0.0
+    if nperseg >= 2 and psd.sum() > 0:
+        tot = psd.sum(); p = psd / tot; pp = p[p > 0]
+        f["spectral_entropy"]   = float(-np.sum(pp * np.log2(pp)) / np.log2(len(p)))
+        f["spectral_centroid"]  = float(np.sum(freqs * p))
+        f["spectral_bandwidth"] = float(np.sqrt(np.sum((freqs - f["spectral_centroid"])**2 * p)))
+        band = lambda lo, hi: float(psd[(freqs >= lo) & (freqs < hi)].sum() / tot)
+        f["band_power_slow"] = band(0.5, 1.5)   # langsames Kauen
+        f["band_power_mid"]  = band(1.5, 2.5)
+        f["band_power_fast"] = band(2.5, 4.0)   # schnelles Kauen
+        f["high_freq_power"] = band(4.0, 15.0)  # Knusper-Energie (→ Apfel)
+    f["ac_peak_height"] = 0.0
+    f["chew_freq_ac"]   = 0.0
+    sig = mag - mag.mean() if len(mag) else mag
+    if len(sig) > int(FS):
+        ac = np.correlate(sig, sig, mode="full")[len(sig) - 1:]
+        ac = ac / (ac[0] + 1e-12)
+        lo, hi = int(FS / 4.0), min(int(FS / 0.5), len(ac) - 1)   # 0.5–4 Hz
+        if hi > lo:
+            peak = np.argmax(ac[lo:hi]) + lo
+            f["ac_peak_height"] = float(ac[peak])
+            f["chew_freq_ac"]   = float(FS / peak)
+    f["chews_per_sec"] = 0.0
+    f["inter_chew_cv"] = 0.0
+    if len(mag) > 5 and mag.std() > 0:
+        peaks, _ = find_peaks(mag, distance=max(1, int(FS * 0.2)), prominence=mag.std())
+        if dur > 0:
+            f["chews_per_sec"] = float(len(peaks) / dur)
+        if len(peaks) > 1:
+            iv = np.diff(t[peaks])
+            if iv.mean() > 0:
+                f["inter_chew_cv"] = float(iv.std() / iv.mean())
     return f
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -647,7 +703,8 @@ def train_models(console: Console) -> tuple:
                     sessions[cls].append(zf)
                     break
 
-        rows, labels = [], []
+        rows, labels, groups = [], [], []
+        session_id = 0
         for cls in CLASSES_RAW:
             for zf in sessions[cls]:
                 with zipfile.ZipFile(zf) as z:
@@ -665,7 +722,8 @@ def train_models(console: Console) -> tuple:
                 ].reset_index(drop=True)
                 df = _add_derived(df)
 
-                # 25-s-Fenster
+                # Fenster (WINDOW_SECS, kein Overlap) — keine Movement Exclusion
+                # mehr: sie schneidet sonst Apfels Knack-Impulse weg (vgl. NB-Analyse)
                 ts = df["seconds_elapsed"].values
                 t_start = ts[0]
                 while t_start + MIN_WINDOW <= ts[-1]:
@@ -673,12 +731,12 @@ def train_models(console: Console) -> tuple:
                     w = df[(ts >= t_start) & (ts < t_stop)].reset_index(drop=True)
                     if len(w) > 1:
                         dur = w["seconds_elapsed"].iloc[-1] - w["seconds_elapsed"].iloc[0]
-                        if dur >= MIN_WINDOW:
-                            clean = _movement_exclusion(w)
-                            if len(clean) > 50:
-                                rows.append(extract_features(clean))
-                                labels.append(cls)
+                        if dur >= MIN_WINDOW and len(w) > 50:
+                            rows.append(extract_features(w))
+                            labels.append(cls)
+                            groups.append(session_id)
                     t_start = t_stop
+                session_id += 1
 
     X   = pd.DataFrame(rows)
     y   = np.array(labels)
@@ -690,20 +748,40 @@ def train_models(console: Console) -> tuple:
         m1 = RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced")
         m1.fit(X[FEATURES_S1], yc)
 
-    with console.status("[bold cyan]Trainiere Stufe-2-Modell (Feinklassifikation) …[/bold cyan]"):
+    with console.status("[bold cyan]Trainiere Stufe-2-Modell (SVM + LOSO-Feature-Selection) …[/bold cyan]"):
         eat      = yc == "Essen"
         X_eat    = X[eat].reset_index(drop=True)
         y_fine   = y[eat]
+        grp_eat  = np.asarray(groups)[eat]
 
-        # Schädliche Features via Permutation Importance entfernen
-        clf_pi = RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced")
-        clf_pi.fit(X_eat, y_fine)
-        pi      = permutation_importance(clf_pi, X_eat, y_fine,
-                                          n_repeats=10, random_state=42, n_jobs=-1)
-        pi_mean = pd.Series(pi.importances_mean, index=X_eat.columns)
-        feat_s2 = [f for f in X_eat.columns if pi_mean[f] >= 0]
+        def _svm2(proba: bool = False):
+            return Pipeline([("sc", StandardScaler()),
+                             ("svm", SVC(kernel="rbf", C=10, class_weight="balanced",
+                                         probability=proba, random_state=42))])
 
-        m2 = RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced")
+        # Group-aware (LOSO-artige) Permutation Importance → session-spezifische
+        # Rausch-Features (negativer Beitrag) entfernen (vgl. NB11)
+        imp     = np.zeros(X_eat.shape[1])
+        n_grp   = len(np.unique(grp_eat))
+        if n_grp >= 3:
+            gss    = GroupShuffleSplit(n_splits=5, test_size=0.3, random_state=42)
+            n_done = 0
+            for tr, te in gss.split(X_eat.values, y_fine, grp_eat):
+                if len(np.unique(y_fine[tr])) < 2:
+                    continue
+                p = _svm2(); p.fit(X_eat.iloc[tr], y_fine[tr])
+                r = permutation_importance(p, X_eat.iloc[te], y_fine[te],
+                                           n_repeats=8, random_state=42, scoring="accuracy")
+                imp += r.importances_mean
+                n_done += 1
+            if n_done:
+                imp /= n_done
+        pi_mean = pd.Series(imp, index=X_eat.columns)
+        feat_s2 = [c for c in X_eat.columns if pi_mean[c] >= 0]
+        if len(feat_s2) < 5:                      # Sicherheitsnetz
+            feat_s2 = list(X_eat.columns)
+
+        m2 = _svm2(proba=True)                    # probability=True für predict_proba
         m2.fit(X_eat[feat_s2], y_fine)
 
     # Zusammenfassung
@@ -996,11 +1074,14 @@ def _run_loo_eval(X, y_raw, yc, X_eat, y_fine, feat_s2) -> None:
                                          output_dict=True, zero_division=0)
         acc1    = accuracy_score(yt1, yp1)
 
-        # ── Stufe 2 ──────────────────────────────────────────────────────────
+        # ── Stufe 2 (SVM-Pipeline, wie deployt) ──────────────────────────────
+        svm2 = Pipeline([("sc", StandardScaler()),
+                         ("svm", SVC(kernel="rbf", C=10, class_weight="balanced",
+                                     random_state=42))])
         yt2, yp2 = [], []
         for tr, te in loo.split(X_eat):
-            clf.fit(X_eat[feat_s2].iloc[tr], y_fine[tr])
-            yp2.append(clf.predict(X_eat[feat_s2].iloc[[te[0]]])[0])
+            svm2.fit(X_eat[feat_s2].iloc[tr], y_fine[tr])
+            yp2.append(svm2.predict(X_eat[feat_s2].iloc[[te[0]]])[0])
             yt2.append(y_fine[te[0]])
 
         labels2 = ["Apfel", "Kaugummi", "Skyr", "Essen"]
