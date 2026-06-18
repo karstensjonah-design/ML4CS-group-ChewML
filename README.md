@@ -5,6 +5,14 @@ Jonah Karstens · Solo project
 
 ---
 
+## Members
+
+<img src="reports/images/jonah_karstens.jpeg" alt="Jonah Karstens" width="180" />
+
+**Jonah Karstens** — full project (solo)
+
+---
+
 ## Research Question
 
 > Can chewing patterns captured via in-ear IMU sensors (AirPods Pro) be used to classify different foods — and distinguish eating from not eating?
