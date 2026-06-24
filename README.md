@@ -23,31 +23,33 @@ Jonah Karstens · Solo project
 
 Most food-tracking approaches rely on manual input or cameras. This project explores a more passive alternative: using the motion sensors already built into AirPods Pro. Chewing different foods creates distinct jaw-movement patterns that show up in accelerometer, gyroscope, and orientation data sampled at ~50 Hz via the **Sensor Logger** iOS app.
 
-Four classes are being explored: **apple**, **chewing gum**, **skyr/yogurt**, and **still** (not eating).
+The model works in two stages: first **eating vs. not eating**, then the specific food — **apple**, **chewing gum**, or **skyr/yogurt** — with a generic **"eating"** fallback for anything else.
 
 ---
 
 ## Status
 
-This project is in early exploration. The current pipeline — preprocessing, feature extraction, and a first classifier — is a rough proof of concept to understand the data and test whether the idea is even feasible. Everything from feature selection to the final model is still open.
+The pipeline has grown from a rough proof of concept into a working **2-stage hierarchical classifier** with engineered features, cross-session evaluation, and a **live real-time app**. The main limitation is data: all recordings are from a single subject, so cross-session generalisation is the real ceiling.
 
-| Phase | Status |
+| Component | Status |
 |---|---|
-| Data collection (12 sessions, 4 classes) | ✅ First round done |
-| Preprocessing & signal exploration | ✅ Rough pipeline in place |
-| Feature extraction (37 features) | ⚠️ Preliminary — which features matter is still open |
-| First classifier (Random Forest, LOO-CV) | ⚠️ Proof of concept — 92% on 12 sessions, not generalizable yet |
-| More recordings & proper dataset | ⏳ Planned |
-| Feature selection | ⏳ Planned |
-| Final model & evaluation | ⏳ Planned |
+| Dataset (~78 sessions, single subject, 5 classes) | ✅ |
+| Preprocessing & feature engineering (52 features) | ✅ |
+| 2-stage model (Still vs. Eating → food type) | ✅ Random Forest + SVM |
+| Cross-session (LOSO-aware) feature selection | ✅ |
+| Live real-time app (per-meal voting) | ✅ |
+| Multi-subject data & generalisation | ⏳ Open — the key remaining issue |
 
 ---
 
-## First Results
+## Results
 
-A Random Forest trained on the current 12-session dataset achieves **92% Leave-One-Out accuracy**. This is an encouraging early result but should be treated with caution — the dataset is very small and the feature set has not been optimized yet.
+- **Within-session (LOO):** ~93% on the fine food classification.
+- **Cross-session (LOSO):** the honest metric. Feature engineering plus pruning session-specific features raised it from 76% to ~86% in the best configuration (realistically ~80% given the small single-subject dataset).
+- A deep-learning check (1D-CNN on raw signals + augmentation) only *ties* the feature-based model — at this data scale, engineered features win.
+- The **live app** classifies in real time and aggregates per meal via majority voting (~87% per-meal).
 
-![Confusion Matrix and Feature Importance](reports/images/ml_final.png)
+![Stage-2 confusion matrix (selected features, LOSO)](reports/images/nb11_selected_confusion.png)
 
 ---
 
@@ -55,7 +57,8 @@ A Random Forest trained on the current 12-session dataset achieves **92% Leave-O
 
 ```
 data/raw/          Raw recordings (ZIP archives, one per session)
-notebooks/         Exploratory analysis
+notebooks/         Exploratory analysis & experiments
+ml_httpstreaming/  Live real-time classification app
 reports/           Weekly progress reports
 results/           Plots and outputs from experiments
 src/               Preprocessing, training, and evaluation scripts
@@ -73,4 +76,9 @@ pip install -r requirements.txt
 
 ## Weekly Reports
 
+- [Week 1](reports/week01.md)
 - [Week 5](reports/week05.md)
+- [Week 6](reports/week06.md)
+- [Week 7](reports/week07.md)
+- [Week 8](reports/week08.md)
+- [Week 9](reports/week09.md)

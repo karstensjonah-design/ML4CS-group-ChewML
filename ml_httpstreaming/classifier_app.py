@@ -4,7 +4,7 @@ Live-Essklassifikation — Hierarchisches 2-Stufen-Modell
 ========================================================
 
 Stufe 1 : Still  vs.  Essen          (Random Forest)
-Stufe 2 : Apfel / Kaugummi / Skyr / Essen (unbekannt)   (SVM, RBF)
+Stufe 2 : Apfel / Kaugummi / Skyr    (SVM, RBF — 3 konkrete Speisen)
 
 Pipeline: 10-s-Fenster → Feature Engineering (Kau-Dynamik) → SVM
           (Movement Exclusion standardmäßig AUS — bewahrt Apfel-Knack-Impulse)
@@ -64,12 +64,18 @@ TRIM_SECS     = 2       # Sekunden am Anfang/Ende abschneiden (Training)
 WINDOW_SECS   = 10.0    # Fensterlänge für Klassifikation
 MIN_WINDOW    = 8.0     # Mindestpuffer vor erster Klassifikation
 SLIDE_SECS    = 2.0     # Klassifikation alle N Sekunden
+STALE_SECS    = 2.5     # länger keine neuen Samples → Stream gilt als getrennt
 K_MOV         = 5       # Movement Exclusion: k × Median
-CONF_S1_MIN   = 0.95    # Stufe 1: Mindest-Konfidenz für "Essen" (sonst → Still)
+CONF_S1_MIN   = 0.75    # Stufe 1: Mindest-Konfidenz für "Essen" (sonst → Still).
+                        # 0.95 war zu streng: Apfel-Kauen liefert live P(Essen)~0.80
+                        # (Bissen+Pausen) und wurde fälschlich zu Still gestuft. 0.75
+                        # liegt zwischen echter Ruhe (~0.69) und Essen (~0.80); der
+                        # MealSession-Streak (5× in Folge) fängt Ausreißer ab.
 MOVEMENT_EXCL = False   # Movement Exclusion standardmäßig AUS (schneidet sonst
                         # Apfels Knack-Impulse weg → Apfel↔Essen-Verwechslung; vgl. NB-Analyse)
 
 CLASSES_RAW   = ["Apfel", "Kaugummi", "Skyr", "Still", "Essen"]
+FOODS         = ["Apfel", "Kaugummi", "Skyr"]   # Stufe-2-Klassen (3 konkrete Speisen)
 TO_COARSE     = {c: ("Still" if c == "Still" else "Essen") for c in CLASSES_RAW}
 
 # Stage-1 Features (RFECV-selektiert, k=5 → 100 % LOO-Accuracy)
@@ -143,6 +149,18 @@ h1 { text-align:center; font-size:.85rem; color:var(--dim);
 .ok   { color:var(--still); }
 .warn { color:var(--skyr); }
 .err  { color:var(--apfel); font-weight:600; }
+
+/* ── Session-Detail ── */
+.sess-row { transition:background .15s; }
+.sess-row:hover { background:rgba(255,255,255,.05); }
+.modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
+  align-items:center; justify-content:center; z-index:50; backdrop-filter:blur(3px); }
+.modal-bg.show { display:flex; }
+.modal { background:var(--card); border:1px solid var(--border); border-radius:16px;
+  padding:1.6rem; max-width:420px; width:90%; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+.modal h2 { margin:0 0 .3rem; font-size:1.5rem; }
+.modal .close { float:right; cursor:pointer; color:var(--dim); font-size:1.3rem;
+  line-height:1; border:none; background:none; }
 
 /* ── Stats ── */
 .stats-grid { display:grid; grid-template-columns:1fr 1fr; gap:.8rem; }
@@ -219,7 +237,7 @@ tr:first-child td { font-weight:600; }
         <div class="stat-lbl">Hz</div></div>
     </div>
     <div style="margin-top:1rem;padding-top:.9rem;border-top:1px solid var(--border);display:flex;align-items:center;gap:.75rem">
-      <span style="font-size:.8rem;color:var(--dim)">Movement Exclusion</span>
+      <span style="font-size:.8rem;color:var(--dim)">Movement Exclusion <span style="opacity:.6">(Stufe 2 · Stufe 1 immer aktiv)</span></span>
       <button id="mov-btn" onclick="toggleMovement()"
         style="padding:.3rem .9rem;border-radius:99px;border:none;cursor:pointer;
                font-size:.8rem;font-weight:600;transition:background .2s">
@@ -251,6 +269,10 @@ tr:first-child td { font-weight:600; }
   </div>
 
 </div><!-- grid -->
+
+<div class="modal-bg" id="detail-bg" onclick="if(event.target===this)closeDetail()">
+  <div class="modal" id="detail-box"></div>
+</div>
 </div><!-- tab-live -->
 
 <div id="tab-model" style="display:none;max-width:960px;margin:0 auto">
@@ -299,7 +321,7 @@ tr:first-child td { font-weight:600; }
 <script>
 const C = {Still:'#2ecc71',Apfel:'#e74c3c',Kaugummi:'#3498db',Skyr:'#f39c12',Essen:'#9b59b6'};
 const L = {Still:'STILL',Apfel:'APFEL',Kaugummi:'KAUGUMMI',Skyr:'SKYR',Essen:'ESSEN (unbekannt)'};
-let lastLabel=null, prevTotal=0, hzBuf=[], clfCount=0;
+let lastLabel=null, prevTotal=0, hzBuf=[], clfCount=0, _completed=[];
 let activeTab='live';
 
 function showTab(t){
@@ -483,24 +505,34 @@ async function poll(){
     // Result
     if(!d.result) return;
     const res=d.result;
-    const color=C[res.label]||'#e0e0f0';
     const lbl  =document.getElementById('label');
-    lbl.textContent = '● '+(L[res.label]||res.label);
-    lbl.style.color = color;
-    if(res.label!==lastLabel){
-      lbl.classList.remove('pop');
-      void lbl.offsetWidth; // reflow
-      lbl.classList.add('pop');
-      lastLabel=res.label;
+    if(res.no_signal){
+      lbl.textContent='○ KEIN SIGNAL';
+      lbl.style.color='var(--dim)';
+      lastLabel=null;
+      document.getElementById('conf-bar').style.width='0%';
+      document.getElementById('confidence').textContent='Stream getrennt – warte auf Daten …';
+      document.getElementById('result-card').style.borderColor='var(--border)';
+      document.getElementById('meta').textContent=res.time||'';
+    } else {
+      const color=C[res.label]||'#e0e0f0';
+      lbl.textContent = '● '+(L[res.label]||res.label);
+      lbl.style.color = color;
+      if(res.label!==lastLabel){
+        lbl.classList.remove('pop');
+        void lbl.offsetWidth; // reflow
+        lbl.classList.add('pop');
+        lastLabel=res.label;
+      }
+      const cpct=Math.round(res.conf*100);
+      document.getElementById('conf-bar').style.width    = cpct+'%';
+      document.getElementById('conf-bar').style.background = color;
+      document.getElementById('confidence').textContent  = 'Konfidenz: '+cpct+'%';
+      document.getElementById('result-card').style.borderColor = color+'55';
+      const meta=['Stufe '+res.stage, res.time];
+      if(res.stage===2&&res.s1_conf) meta.push('S1: '+Math.round(res.s1_conf*100)+'%');
+      document.getElementById('meta').textContent = meta.join('  ·  ');
     }
-    const cpct=Math.round(res.conf*100);
-    document.getElementById('conf-bar').style.width    = cpct+'%';
-    document.getElementById('conf-bar').style.background = color;
-    document.getElementById('confidence').textContent  = 'Konfidenz: '+cpct+'%';
-    document.getElementById('result-card').style.borderColor = color+'55';
-    const meta=['Stufe '+res.stage, res.time];
-    if(res.stage===2&&res.s1_conf) meta.push('S1: '+Math.round(res.s1_conf*100)+'%');
-    document.getElementById('meta').textContent = meta.join('  ·  ');
 
     // History
     if(d.history&&d.history.length){
@@ -549,7 +581,7 @@ async function poll(){
       st.style.color = color;
       sc.style.borderColor = color+'66';
       const total = Object.values(s.votes).reduce((a,b)=>a+b,0)||1;
-      const foods = ['Apfel','Kaugummi','Skyr','Essen'];
+      const foods = ['Apfel','Kaugummi','Skyr'];
       sv.innerHTML = foods.map(f=>{
         const v   = s.votes[f]||0;
         const pct = Math.round(v/total*100);
@@ -565,21 +597,56 @@ async function poll(){
       sm.textContent = `Seit ${d.session.duration_s}s  ·  ${total} Stimmen  ·  ${Math.round(s.vote_conf*100)}% Mehrheit`;
     }
 
-    // Abgeschlossene Sessions
-    if(s.completed&&s.completed.length){
-      document.getElementById('sess-hist').innerHTML = s.completed.map(r=>{
-        const c  = C[r.label]||'#e0e0f0';
-        const vt = Object.entries(r.votes||{}).map(([k,v])=>`${k}:${v}`).join(', ');
-        return `<tr>
-          <td style="color:var(--dim)">${r.start}</td>
-          <td><span class="dot" style="background:${c}"></span>${L[r.label]||r.label}</td>
-          <td style="color:var(--dim);font-size:.8rem">${vt}</td>
-          <td style="color:var(--dim)">${r.duration_s}s</td></tr>`;
-      }).join('');
+    // Abgeschlossene Sessions (anklickbar → Detailansicht)
+    if(s.completed){
+      _completed = s.completed;
+      const hist = document.getElementById('sess-hist');
+      if(s.completed.length){
+        hist.innerHTML = s.completed.map((r,i)=>{
+          const c  = C[r.label]||'#e0e0f0';
+          const vt = Object.entries(r.votes||{}).map(([k,v])=>`${k}:${v}`).join(', ');
+          return `<tr class="sess-row" onclick="showSessionDetail(${i})">
+            <td style="color:var(--dim)">${r.start}</td>
+            <td><span class="dot" style="background:${c}"></span>${L[r.label]||r.label}</td>
+            <td style="color:var(--dim);font-size:.8rem">${vt}</td>
+            <td style="color:var(--dim)">${r.duration_s}s&nbsp;›</td></tr>`;
+        }).join('');
+      } else {
+        hist.innerHTML = '<tr><td colspan="4" style="color:var(--dim);text-align:center;padding:1rem">noch keine</td></tr>';
+      }
     }
   }catch(e){}
   setTimeout(poll, 1000);
 }
+
+function showSessionDetail(i){
+  const r=_completed[i]; if(!r) return;
+  const color=C[r.label]||'#e0e0f0';
+  const total=Object.values(r.votes||{}).reduce((a,b)=>a+b,0)||1;
+  const bars=['Apfel','Kaugummi','Skyr'].map(f=>{
+    const v=(r.votes||{})[f]||0, pct=Math.round(v/total*100), c=C[f]||'#aaa';
+    return `<div style="display:flex;align-items:center;gap:.5rem;margin:.35rem 0;font-size:.9rem">
+      <span style="width:75px;color:var(--dim)">${f}</span>
+      <div style="flex:1;background:#2a2a42;border-radius:99px;height:9px;overflow:hidden">
+        <div style="width:${pct}%;background:${c};height:100%;border-radius:99px"></div></div>
+      <span style="width:60px;text-align:right;color:${c};font-weight:600">${v} (${pct}%)</span></div>`;
+  }).join('');
+  document.getElementById('detail-box').innerHTML=`
+    <button class="close" onclick="closeDetail()">×</button>
+    <div style="color:var(--dim);font-size:.8rem">Mahlzeit · ${r.start}</div>
+    <h2 style="color:${color}"><span class="dot" style="background:${color};width:14px;height:14px"></span> ${L[r.label]||r.label}</h2>
+    <div style="display:flex;gap:1.6rem;margin:.8rem 0 1.1rem;font-size:.85rem">
+      <div><div style="color:var(--dim)">Dauer</div><div style="font-weight:700;font-size:1.15rem">${r.duration_s} s</div></div>
+      <div><div style="color:var(--dim)">Mehrheit</div><div style="font-weight:700;font-size:1.15rem">${Math.round((r.conf||0)*100)}%</div></div>
+      <div><div style="color:var(--dim)">Stimmen</div><div style="font-weight:700;font-size:1.15rem">${total}</div></div>
+    </div>
+    <div style="color:var(--dim);font-size:.78rem;margin-bottom:.4rem">Stimmen-Verteilung</div>
+    ${bars}`;
+  document.getElementById('detail-bg').classList.add('show');
+}
+function closeDetail(){ document.getElementById('detail-bg').classList.remove('show'); }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDetail(); });
+
 poll();
 </script>
 </body>
@@ -691,118 +758,105 @@ def extract_features(df: pd.DataFrame) -> dict:
 #  MODELL-TRAINING
 # ══════════════════════════════════════════════════════════════════════════════
 
-def train_models(console: Console) -> tuple:
-    """Lädt Rohdaten, extrahiert Features, trainiert Stufe-1 und Stufe-2 Modell."""
+def _train_bundle(X, y, groups) -> dict:
+    """Trainiert Stufe 1 (RF) + Stufe 2 (SVM mit group-aware Feature Selection)
+    für einen bereits extrahierten Feature-Datensatz."""
+    yc = np.array([TO_COARSE[c] for c in y])
+    m1 = RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced")
+    m1.fit(X[FEATURES_S1], yc)
+
+    # Stufe 2 nur auf den 3 konkreten Speisen — generisches "Essen" überlappt
+    # physikalisch und drückt v.a. Apfels Precision (0.53 → 0.76 ohne es).
+    spec_mask = np.isin(y, FOODS)
+    X_eat   = X[spec_mask].reset_index(drop=True)
+    y_fine  = y[spec_mask]
+    grp_eat = np.asarray(groups)[spec_mask]
+
+    def _svm2(proba=False):
+        return Pipeline([("sc", StandardScaler()),
+                         ("svm", SVC(kernel="rbf", C=10, class_weight="balanced",
+                                     probability=proba, random_state=42))])
+    # group-aware Permutation Importance → session-spezifisches Rauschen entfernen (NB11)
+    imp = np.zeros(X_eat.shape[1])
+    if len(np.unique(grp_eat)) >= 3:
+        gss = GroupShuffleSplit(n_splits=5, test_size=0.3, random_state=42)
+        n_done = 0
+        for tr, te in gss.split(X_eat.values, y_fine, grp_eat):
+            if len(np.unique(y_fine[tr])) < 2:
+                continue
+            p = _svm2(); p.fit(X_eat.iloc[tr], y_fine[tr])
+            r = permutation_importance(p, X_eat.iloc[te], y_fine[te],
+                                       n_repeats=8, random_state=42, scoring="accuracy")
+            imp += r.importances_mean; n_done += 1
+        if n_done:
+            imp /= n_done
+    pi_mean = pd.Series(imp, index=X_eat.columns)
+    feat_s2 = [c for c in X_eat.columns if pi_mean[c] >= 0]
+    if len(feat_s2) < 5:
+        feat_s2 = list(X_eat.columns)
+
+    m2 = _svm2(proba=True); m2.fit(X_eat[feat_s2], y_fine)
+
+    df_train = X[FEATURES_S1].copy(); df_train["_class"] = yc
+    train_stats = df_train.groupby("_class")[FEATURES_S1].mean()
+    return {"m1": m1, "m2": m2, "feat_s2": feat_s2, "train_stats": train_stats,
+            "X": X, "y": y, "yc": yc, "X_eat": X_eat, "y_fine": y_fine}
+
+
+def train_models(console: Console) -> dict:
+    """Lädt Rohdaten und trainiert ZWEI Modellsätze — mit und ohne Movement Exclusion.
+    Der Live-Toggle wählt zur Laufzeit den passenden Satz (kein Train/Inferenz-Mismatch)."""
     _SKIP = {"Metadata.csv", "Annotation.csv"}
 
     with console.status("[bold cyan]Lade Sensordaten aus data/raw …[/bold cyan]"):
-        sessions: dict[str, list] = {cls: [] for cls in CLASSES_RAW}
-        for zf in sorted(DATA_DIR.glob("*.zip")):
-            for cls in CLASSES_RAW:
-                if zf.name.startswith(cls + "_"):
-                    sessions[cls].append(zf)
-                    break
-
-        rows, labels, groups = [], [], []
-        session_id = 0
+        session_dfs = []   # (cls, df, session_id) — einmal eingelesen, für beide Varianten
+        sid = 0
         for cls in CLASSES_RAW:
-            for zf in sessions[cls]:
+            for zf in sorted(DATA_DIR.glob(f"{cls}_*.zip")):
                 with zipfile.ZipFile(zf) as z:
-                    csv_name = next(
-                        n for n in z.namelist()
-                        if n.endswith(".csv") and n not in _SKIP
-                    )
+                    csv_name = next(n for n in z.namelist()
+                                    if n.endswith(".csv") and n not in _SKIP)
                     with z.open(csv_name) as fh:
                         df = pd.read_csv(fh)
-
-                # Trim
                 t  = df["seconds_elapsed"]
-                df = df[
-                    (t >= t.iloc[0] + TRIM_SECS) & (t <= t.iloc[-1] - TRIM_SECS)
-                ].reset_index(drop=True)
-                df = _add_derived(df)
+                df = df[(t >= t.iloc[0] + TRIM_SECS) & (t <= t.iloc[-1] - TRIM_SECS)].reset_index(drop=True)
+                session_dfs.append((cls, _add_derived(df), sid)); sid += 1
 
-                # Fenster (WINDOW_SECS, kein Overlap) — keine Movement Exclusion
-                # mehr: sie schneidet sonst Apfels Knack-Impulse weg (vgl. NB-Analyse)
-                ts = df["seconds_elapsed"].values
-                t_start = ts[0]
-                while t_start + MIN_WINDOW <= ts[-1]:
-                    t_stop = t_start + WINDOW_SECS
-                    w = df[(ts >= t_start) & (ts < t_stop)].reset_index(drop=True)
-                    if len(w) > 1:
-                        dur = w["seconds_elapsed"].iloc[-1] - w["seconds_elapsed"].iloc[0]
-                        if dur >= MIN_WINDOW and len(w) > 50:
-                            rows.append(extract_features(w))
-                            labels.append(cls)
-                            groups.append(session_id)
-                    t_start = t_stop
-                session_id += 1
+    def _build(apply_me):
+        rows, labels, groups = [], [], []
+        for cls, df, sid in session_dfs:
+            ts = df["seconds_elapsed"].values
+            t_start = ts[0]
+            while t_start + MIN_WINDOW <= ts[-1]:
+                t_stop = t_start + WINDOW_SECS
+                w = df[(ts >= t_start) & (ts < t_stop)].reset_index(drop=True)
+                if len(w) > 1 and (w["seconds_elapsed"].iloc[-1] - w["seconds_elapsed"].iloc[0]) >= MIN_WINDOW:
+                    src = _movement_exclusion(w) if apply_me else w
+                    if len(src) > 50:
+                        rows.append(extract_features(src)); labels.append(cls); groups.append(sid)
+                t_start = t_stop
+        return pd.DataFrame(rows), np.array(labels), np.array(groups)
 
-    X   = pd.DataFrame(rows)
-    y   = np.array(labels)
-    yc  = np.array([TO_COARSE[c] for c in y])
-
-    n_samples = {cls: (y == cls).sum() for cls in CLASSES_RAW}
-
-    with console.status("[bold cyan]Trainiere Stufe-1-Modell (Still vs. Essen) …[/bold cyan]"):
-        m1 = RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced")
-        m1.fit(X[FEATURES_S1], yc)
-
-    with console.status("[bold cyan]Trainiere Stufe-2-Modell (SVM + LOSO-Feature-Selection) …[/bold cyan]"):
-        eat      = yc == "Essen"
-        X_eat    = X[eat].reset_index(drop=True)
-        y_fine   = y[eat]
-        grp_eat  = np.asarray(groups)[eat]
-
-        def _svm2(proba: bool = False):
-            return Pipeline([("sc", StandardScaler()),
-                             ("svm", SVC(kernel="rbf", C=10, class_weight="balanced",
-                                         probability=proba, random_state=42))])
-
-        # Group-aware (LOSO-artige) Permutation Importance → session-spezifische
-        # Rausch-Features (negativer Beitrag) entfernen (vgl. NB11)
-        imp     = np.zeros(X_eat.shape[1])
-        n_grp   = len(np.unique(grp_eat))
-        if n_grp >= 3:
-            gss    = GroupShuffleSplit(n_splits=5, test_size=0.3, random_state=42)
-            n_done = 0
-            for tr, te in gss.split(X_eat.values, y_fine, grp_eat):
-                if len(np.unique(y_fine[tr])) < 2:
-                    continue
-                p = _svm2(); p.fit(X_eat.iloc[tr], y_fine[tr])
-                r = permutation_importance(p, X_eat.iloc[te], y_fine[te],
-                                           n_repeats=8, random_state=42, scoring="accuracy")
-                imp += r.importances_mean
-                n_done += 1
-            if n_done:
-                imp /= n_done
-        pi_mean = pd.Series(imp, index=X_eat.columns)
-        feat_s2 = [c for c in X_eat.columns if pi_mean[c] >= 0]
-        if len(feat_s2) < 5:                      # Sicherheitsnetz
-            feat_s2 = list(X_eat.columns)
-
-        m2 = _svm2(proba=True)                    # probability=True für predict_proba
-        m2.fit(X_eat[feat_s2], y_fine)
+    with console.status("[bold cyan]Trainiere Modell OHNE Movement Exclusion …[/bold cyan]"):
+        bundle_off = _train_bundle(*_build(False))
+    with console.status("[bold cyan]Trainiere Modell MIT Movement Exclusion …[/bold cyan]"):
+        bundle_on  = _train_bundle(*_build(True))
+    bundles = {False: bundle_off, True: bundle_on}
 
     # Zusammenfassung
+    n_samples = {cls: int((bundle_off["y"] == cls).sum()) for cls in CLASSES_RAW}
     grid = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
-    grid.add_column(style="dim")
-    grid.add_column()
+    grid.add_column(style="dim"); grid.add_column()
     grid.add_row("Trainings-Samples",
                  "  ".join(f"[bold]{cls}[/bold]: {n_samples[cls]}" for cls in CLASSES_RAW))
     grid.add_row("Stufe-1-Features", f"{len(FEATURES_S1)}  ({', '.join(FEATURES_S1)})")
     grid.add_row("Stufe-2-Features",
-                 f"{len(feat_s2)} / {len(X_eat.columns)} (nach Permutation-Importance-Filter)")
-
-    # Trainings-Mittelwerte für Stage-1-Features (für Debug-Anzeige)
-    df_train = X[FEATURES_S1].copy()
-    df_train["_class"] = yc
-    train_stats = df_train.groupby("_class")[FEATURES_S1].mean()
-
-    console.print(Panel(grid, title="[bold green]Modell trainiert[/bold green]",
+                 f"ohne ME: {len(bundle_off['feat_s2'])}  ·  mit ME: {len(bundle_on['feat_s2'])}"
+                 f"  (von {bundle_off['X_eat'].shape[1]})")
+    grid.add_row("Aktiv", f"Movement Exclusion {'AN' if _movement_excl else 'AUS'}")
+    console.print(Panel(grid, title="[bold green]2 Modelle trainiert (mit / ohne ME)[/bold green]",
                          border_style="green"))
-
-    return m1, m2, feat_s2, train_stats, X, y, yc, X_eat, y_fine
+    return bundles
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  SENSOR-PUFFER
@@ -962,49 +1016,50 @@ class MealSession:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class LiveClassifier:
-    def __init__(self, m1, m2, feat_s2: list[str], train_stats: pd.DataFrame) -> None:
-        self.m1          = m1
-        self.m2          = m2
-        self.feat_s2     = feat_s2
-        self.train_stats = train_stats   # mean pro Klasse für FEATURES_S1
+    def __init__(self, bundles: dict) -> None:
+        self.bundles = bundles           # {False: Modell ohne ME, True: Modell mit ME}
         self.result: dict | None = None
         self.history: list[dict] = []
         self.last_feats: dict | None = None
         self.session = MealSession()
 
+    @property
+    def train_stats(self) -> pd.DataFrame:
+        """Stage-1-Trainings-Mittelwerte — Stufe 1 nutzt immer das ME-Modell."""
+        return self.bundles[True]["train_stats"]
+
     def classify(self, df: pd.DataFrame) -> dict:
         df = _add_derived(df)
 
-        # Maske explizit berechnen — für Filterung UND Visualisierung
-        if _movement_excl:
-            thr      = max(0.02, K_MOV * df["magnitude"].median())
-            roll_max = df["magnitude"].rolling(50, center=True, min_periods=1).max()
-            mask     = roll_max <= thr
-            clean    = df[mask].reset_index(drop=True)
-            excl_arr = (~mask).values          # True = herausgefiltert
-        else:
-            clean    = df
-            excl_arr = np.zeros(len(df), dtype=bool)
+        # Movement-Exclusion-Maske IMMER berechnen
+        thr      = max(0.02, K_MOV * df["magnitude"].median())
+        roll_max = df["magnitude"].rolling(50, center=True, min_periods=1).max()
+        mask     = roll_max <= thr
+        clean_me = df[mask].reset_index(drop=True)        # bewegungsbereinigt
+        excl_arr = (~mask).values                          # True = herausgefiltert
 
-        # Magnitude + Ausschlussmaske für Visualisierung (auf 80 Punkte reduziert)
+        # Stufe 1 nutzt IMMER die Movement Exclusion (robuste Still-Erkennung,
+        # kein Fehlalarm bei Kopfbewegung); Stufe 2 nutzt je nach Toggle das
+        # bereinigte (ME an) oder das rohe Fenster (ME aus → bewahrt Apfels Knack).
+        win_s2 = clean_me if _movement_excl else df
+
+        # Visualisierung (auf 80 Punkte reduziert)
         n    = len(df)
         idxs = np.linspace(0, n - 1, min(n, 80), dtype=int)
         mag_viz  = [round(float(v), 4) for v in df["magnitude"].values[idxs]]
         excl_viz = [bool(v)            for v in excl_arr[idxs]]
 
-        if len(clean) < 50:
-            result = {"label": "Still", "conf": 0.0, "stage": 1,
-                      "note": "wenig Daten nach Filterung"}
+        if len(clean_me) < 50 or len(win_s2) < 50:
+            result = {"label": "Still", "conf": 0.0, "stage": 1, "note": "wenig Daten"}
         else:
-            feats = pd.DataFrame([extract_features(clean)])
-            self.last_feats = {f: float(feats[f].iloc[0]) for f in FEATURES_S1}
+            feats_me = pd.DataFrame([extract_features(clean_me)])
+            self.last_feats = {f: float(feats_me[f].iloc[0]) for f in FEATURES_S1}
 
-            # Stufe 1
-            p1    = self.m1.predict_proba(feats[FEATURES_S1])[0]
-            pred1 = self.m1.classes_[np.argmax(p1)]
+            # Stufe 1 — immer ME-Modell auf bereinigtem Fenster
+            b1    = self.bundles[True]
+            p1    = b1["m1"].predict_proba(feats_me[FEATURES_S1])[0]
+            pred1 = b1["m1"].classes_[np.argmax(p1)]
             conf1 = float(np.max(p1))
-
-            # Schwellenwert: nur als Essen klassifizieren wenn Konfidenz >= CONF_S1_MIN
             if pred1 == "Essen" and conf1 < CONF_S1_MIN:
                 pred1 = "Still"
                 conf1 = 1.0 - conf1
@@ -1012,12 +1067,13 @@ class LiveClassifier:
             if pred1 == "Still":
                 result = {"label": "Still", "conf": conf1, "stage": 1}
             else:
-                # Stufe 2
-                p2    = self.m2.predict_proba(feats[self.feat_s2])[0]
-                pred2 = self.m2.classes_[np.argmax(p2)]
+                # Stufe 2 — Toggle-Modell auf passendem Fenster
+                b2       = self.bundles[_movement_excl]
+                feats_s2 = feats_me if _movement_excl else pd.DataFrame([extract_features(win_s2)])
+                p2    = b2["m2"].predict_proba(feats_s2[b2["feat_s2"]])[0]
+                pred2 = b2["m2"].classes_[np.argmax(p2)]
                 conf2 = float(np.max(p2))
-                result = {"label": pred2, "conf": conf2, "stage": 2,
-                          "s1_conf": conf1}
+                result = {"label": pred2, "conf": conf2, "stage": 2, "s1_conf": conf1}
 
         result["time"] = datetime.now().strftime("%H:%M:%S")
         result["me"]   = _movement_excl
@@ -1031,7 +1087,7 @@ class LiveClassifier:
         log_row = {"time": result["time"], "label": result["label"],
                    "stage": result["stage"], "confidence": f"{result['conf']:.4f}",
                    "s1_conf": f"{result.get('s1_conf', result['conf']):.4f}",
-                   "samples_clean": len(clean) if len(clean) >= 50 else 0}
+                   "samples_clean": len(clean_me) if len(clean_me) >= 50 else 0}
         if self.last_feats:
             log_row.update({k: f"{v:.6f}" for k, v in self.last_feats.items()})
         _write_log(log_row)
@@ -1039,22 +1095,36 @@ class LiveClassifier:
             self.history.pop(0)
         return result
 
+    def mark_no_signal(self) -> None:
+        """Stream getrennt / kein frisches Fenster: nicht mit altem Signal weiterklassifizieren.
+        Setzt einen 'kein Signal'-Zustand und lässt eine aktive Mahlzeit-Session auslaufen."""
+        self.result = {"label": "—", "conf": 0.0, "stage": 0, "note": "kein Signal",
+                       "time": datetime.now().strftime("%H:%M:%S"),
+                       "me": _movement_excl, "mag": [], "excl": [], "no_signal": True}
+        self.last_feats = None
+        self.session.update({"label": "Still"})   # zählt als Still → beendet aktive Session
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  HTTP-SERVER
 # ══════════════════════════════════════════════════════════════════════════════
 
 _buffer: SensorBuffer
 _clf:    "LiveClassifier"
+_bundles:       dict  = {}             # {False: ohne ME, True: mit ME}
 _movement_excl: bool  = MOVEMENT_EXCL
 _model_stats:   dict  = {"status": "pending"}
-_loo_data:      tuple = ()
 
-def _run_loo_eval(X, y_raw, yc, X_eat, y_fine, feat_s2) -> None:
-    """Läuft im Hintergrund — berechnet LOO-Metriken für beide Stufen."""
+def _run_loo_eval(bundle: dict) -> None:
+    """Läuft im Hintergrund — berechnet LOO-Metriken für beide Stufen des Modellsatzes."""
     global _model_stats
     from sklearn.model_selection import LeaveOneOut
     from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
 
+    b1                = _bundles.get(True, bundle)   # Stufe 1 nutzt immer das ME-Modell
+    X, yc             = b1["X"], b1["yc"]
+    y_raw             = bundle["y"]
+    X_eat, y_fine     = bundle["X_eat"], bundle["y_fine"]
+    feat_s2           = bundle["feat_s2"]
     _model_stats = {"status": "running", "computed_at": None}
     try:
         clf = RandomForestClassifier(n_estimators=200, random_state=42,
@@ -1084,7 +1154,7 @@ def _run_loo_eval(X, y_raw, yc, X_eat, y_fine, feat_s2) -> None:
             yp2.append(svm2.predict(X_eat[feat_s2].iloc[[te[0]]])[0])
             yt2.append(y_fine[te[0]])
 
-        labels2 = ["Apfel", "Kaugummi", "Skyr", "Essen"]
+        labels2 = list(FOODS)
         cm2     = confusion_matrix(yt2, yp2, labels=labels2).tolist()
         rep2    = classification_report(yt2, yp2, labels=labels2,
                                          output_dict=True, zero_division=0)
@@ -1105,6 +1175,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ── GET ───────────────────────────────────────────────────────────────────
     def do_GET(self):
+        global _movement_excl
         if self.path == "/":
             body = _HTML_PAGE.encode("utf-8")
             self.send_response(200)
@@ -1122,9 +1193,9 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
         elif self.path == "/api/recompute":
-            global _loo_data
-            if _model_stats.get("status") != "running" and _loo_data:
-                threading.Thread(target=_run_loo_eval, args=_loo_data, daemon=True).start()
+            if _model_stats.get("status") != "running" and _bundles:
+                threading.Thread(target=_run_loo_eval,
+                                 args=(_bundles[_movement_excl],), daemon=True).start()
             body = b'{"started": true}'
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1133,8 +1204,11 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
         elif self.path == "/api/toggle_movement":
-            global _movement_excl
             _movement_excl = not _movement_excl
+            # LOO-Stats für den jetzt aktiven Modellsatz neu rechnen
+            if _model_stats.get("status") != "running" and _bundles:
+                threading.Thread(target=_run_loo_eval,
+                                 args=(_bundles[_movement_excl],), daemon=True).start()
             body = json.dumps({"movement_excl": _movement_excl}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1323,18 +1397,26 @@ def build_layout(clf: LiveClassifier, buf: SensorBuffer) -> Layout:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main() -> None:
-    global _buffer, _clf, _loo_data
+    global _buffer, _clf, _bundles
+
+    # Windows: stdout/stderr auf UTF-8 zwingen, sonst crasht Rich an Sonderzeichen
+    # (z.B. ● in den Labels) wenn die Konsole cp1252 benutzt (z.B. umgeleitete Ausgabe)
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
 
     console = Console()
     console.rule("[bold blue]Live-Essklassifikation[/bold blue]")
 
-    # ── Modell trainieren ────────────────────────────────────────────────────
-    m1, m2, feat_s2, train_stats, X, y_raw, yc, X_eat, y_fine = train_models(console)
-    _clf     = LiveClassifier(m1, m2, feat_s2, train_stats)
-    _loo_data = (X, y_raw, yc, X_eat, y_fine, feat_s2)
+    # ── Modelle trainieren (mit + ohne Movement Exclusion) ────────────────────
+    _bundles = train_models(console)
+    _clf     = LiveClassifier(_bundles)
 
-    # LOO-Evaluation im Hintergrund starten
-    threading.Thread(target=_run_loo_eval, args=_loo_data, daemon=True).start()
+    # LOO-Evaluation des aktiven Modellsatzes im Hintergrund starten
+    threading.Thread(target=_run_loo_eval,
+                     args=(_bundles[_movement_excl],), daemon=True).start()
     console.print("[dim]LOO-Evaluation läuft im Hintergrund …[/dim]")
     _buffer = SensorBuffer()
 
@@ -1363,11 +1445,26 @@ def main() -> None:
     last_classify = 0.0
     console.print("[dim]Klassifikations-Log (Strg+C zum Beenden):[/dim]\n")
 
+    was_stale = False
     while True:
         now      = time.monotonic()
+        if (now - last_classify) < SLIDE_SECS:
+            time.sleep(0.25); continue
+        last_classify = now
+
+        stale    = _buffer.seconds_since_last() > STALE_SECS
         buffered = _buffer.buffered_seconds()
 
-        if buffered >= MIN_WINDOW and (now - last_classify) >= SLIDE_SECS:
+        if stale or buffered < MIN_WINDOW:
+            # Kein frisches Signal → nicht mit altem Fenster weiterklassifizieren
+            _clf.mark_no_signal()
+            if stale and not was_stale:
+                console.print("[yellow]⚠ kein Signal — Stream getrennt[/yellow]")
+            was_stale = stale
+        else:
+            if was_stale:
+                console.print("[green]✓ Signal wieder da[/green]")
+            was_stale = False
             window_df = _buffer.get_window(WINDOW_SECS)
             if window_df is not None:
                 prev_state = _clf.session.state
