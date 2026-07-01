@@ -78,8 +78,14 @@ CLASSES_RAW   = ["Apfel", "Kaugummi", "Skyr", "Still", "Essen"]
 FOODS         = ["Apfel", "Kaugummi", "Skyr"]   # Stufe-2-Klassen (3 konkrete Speisen)
 TO_COARSE     = {c: ("Still" if c == "Still" else "Essen") for c in CLASSES_RAW}
 
-# Stage-1 Features (RFECV-selektiert, k=5 → 100 % LOO-Accuracy)
-FEATURES_S1   = ["stillness_ratio", "magnitude_max", "lin_y_mean", "lin_y_std", "yaw_mean"]
+# Stage-1 Features: Bewegung + Kau-Rhythmus, OHNE Rotation/Orientierung.
+# Die alten 5 Features (magnitude/yaw/lin_y) erkannten nur "Bewegung" → jede
+# Kopfbewegung (Sprechen, Umschauen) löste Fehlalarm aus (Still-Recall nur ~69 %).
+# Rhythmus-Features sind kau-spezifisch → Still-Recall ~87 %, Skyr bleibt erkannt (~96 %).
+FEATURES_S1   = ["stillness_ratio", "movement_events", "magnitude_mean", "magnitude_std",
+                 "magnitude_max", "jerk_mean", "jerk_std", "crest_factor", "chews_per_sec",
+                 "ac_peak_height", "rhythmicity", "chew_band_power", "spectral_entropy",
+                 "dominant_chew_freq"]
 
 # Pflichtfelder im eingehenden Sensor-Stream
 REQUIRED_KEYS = [
@@ -88,13 +94,14 @@ REQUIRED_KEYS = [
     "pitch", "roll", "yaw",
 ]
 
-# Log-Datei mit Zeitstempel pro App-Start
+# Log-Datei mit Zeitstempel pro App-Start (in logs/ — haelt den App-Ordner sauber)
 _log_start = datetime.now().strftime("%Y%m%d_%H%M%S")
-LOG_FILE    = Path(__file__).parent / f"classification_log_{_log_start}.csv"
+LOG_FILE    = Path(__file__).parent / "logs" / f"classification_log_{_log_start}.csv"
 LOG_FIELDS  = ["time", "label", "stage", "confidence", "s1_conf",
                "samples_clean"] + FEATURES_S1
 
 def _write_log(row: dict) -> None:
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     exists = LOG_FILE.exists()
     with LOG_FILE.open("a", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=LOG_FIELDS, extrasaction="ignore")

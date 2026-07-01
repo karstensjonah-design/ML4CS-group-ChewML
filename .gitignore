@@ -30,12 +30,16 @@ data/raw/ziFyStZr
 .claude/
 
 # Laufzeit-Artefakte (Streaming-App)
+ml_httpstreaming/logs/
 ml_httpstreaming/classification_log_*.csv
 ml_httpstreaming/sensor_data*.csv
 ml_httpstreaming/cd
 ml_httpstreaming/python
 sensor_data_*.csv
 git_push.bat
+
+# Aufgeraeumte Altdateien (verschoben, nicht geloescht)
+trash/
 
 # Presentation files (not ready to push)
 *.pptx
