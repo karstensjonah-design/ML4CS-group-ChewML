@@ -42,7 +42,7 @@ The talk deck (`chewML_Abschlusspräsentation_final.pdf`) is assembled and ties 
 
 ## Status
 
-Project complete. Final presentation on **2.7. / 9.7.** — slides, figures, and the live-app demo are ready.
+Project complete. Final presentation on **2.7.** — slides, figures, and the live-app demo are ready.
 
 ---
 
