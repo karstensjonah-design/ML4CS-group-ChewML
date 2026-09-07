@@ -23,33 +23,81 @@ Jonah Karstens · Solo project
 
 Most food-tracking approaches rely on manual input or cameras. This project explores a more passive alternative: using the motion sensors already built into AirPods Pro. Chewing different foods creates distinct jaw-movement patterns that show up in accelerometer, gyroscope, and orientation data sampled at ~50 Hz via the **Sensor Logger** iOS app.
 
-The model works in two stages: first **eating vs. not eating**, then the specific food — **apple**, **chewing gum**, or **skyr/yogurt** — with a generic **"eating"** fallback for anything else.
+No audio is used at any point — the pipeline runs on IMU signals alone, on an unmodified consumer device.
+
+The model works in two stages: first **eating vs. not eating**, then the specific food — **apple**, **chewing gum**, or **skyr/yogurt**.
 
 ---
 
 ## Status
 
-The pipeline has grown from a rough proof of concept into a working **2-stage hierarchical classifier** with engineered features, cross-session evaluation, and a **live real-time app**. The main limitation is data: all recordings are from a single subject, so cross-session generalisation is the real ceiling.
+Complete. The pipeline runs end to end, from a live sensor stream to a per-meal decision, and the shipped configuration is verified against an unbiased cross-session protocol.
 
 | Component | Status |
 |---|---|
-| Dataset (~78 sessions, single subject, 5 classes) | ✅ |
+| Dataset (103 recordings, single subject, 5 classes) | ✅ |
 | Preprocessing & feature engineering (52 features) | ✅ |
 | 2-stage model (Still vs. Eating → food type) | ✅ Random Forest + SVM |
-| Cross-session (LOSO-aware) feature selection | ✅ |
+| Cross-session (LOSO) evaluation of the shipped config | ✅ NB15 |
 | Live real-time app (per-meal voting) | ✅ |
-| Multi-subject data & generalisation | ⏳ Open — the key remaining issue |
+| Multi-subject data & generalisation | ⏳ Open — the key remaining limitation |
+
+---
+
+## Dataset
+
+103 recordings · 1522 windows (10 s, non-overlapping) · 52 features · single subject.
+
+| Class | Recordings | Windows |
+|---|---|---|
+| Apple | 27 | 308 |
+| Chewing gum | 28 | 312 |
+| Skyr | 25 | 343 |
+| Still | 19 | 356 |
+| Eating (generic) | 4 | 203 |
 
 ---
 
 ## Results
 
-- **Within-session (LOO):** ~93% on the fine food classification.
-- **Cross-session (LOSO):** the honest metric. Feature engineering plus pruning session-specific features raised it from 76% to ~86% in the best configuration (realistically ~80% given the small single-subject dataset).
-- A deep-learning check (1D-CNN on raw signals + augmentation) only *ties* the feature-based model — at this data scale, engineered features win.
-- The **live app** classifies in real time and aggregates per meal via majority voting (~87% per-meal).
+All numbers below come from [`notebooks/15_final_verification.ipynb`](notebooks/15_final_verification.ipynb), which reproduces the **shipped** configuration of [`ml_httpstreaming/classifier_app.py`](ml_httpstreaming/classifier_app.py) exactly: Stage 1 is a RandomForest on 14 features over movement-excluded windows with a 0.75 confidence rule; Stage 2 is an RBF-SVM on raw windows with movement exclusion off.
 
-![Stage-2 confusion matrix (selected features, LOSO)](reports/images/nb11_selected_confusion.png)
+| Metric | Result |
+|---|---|
+| Stage 1 (Still vs. Eating), LOSO | **94.68 %** (balanced 94.48 %) |
+| Stage 2 per window, LOSO | **88.68 %** |
+| Stage 2 per meal (majority vote) | **95.00 %** (76/80) |
+| End-to-end per window | **87.49 %** |
+| End-to-end per meal | **95.00 %** (76/80) |
+| Within-session (80/20 split) | 93.78 % |
+
+The gap between the last two rows is the honest part of the story: mixing windows from the same recording across train and test inflates the score, so **cross-session LOSO is the metric that counts**.
+
+Stage-2 feature selection (group-aware permutation importance) is recomputed **inside every LOSO fold** on training data only. It keeps a median of 42 of 52 features, ranging from 14 to 48 across folds — the selection is not stable, which is worth knowing before quoting any single feature count.
+
+![Stage-2 confusion matrices, per window and per meal](reports/images/final_stufe2.png)
+
+Skyr is the most reliable class and apple the weakest, which runs counter to the expectation from the literature that hard, crunchy foods would be easiest. The main error is apple ↔ chewing gum confusion.
+
+A deep-learning check (1D-CNN on raw signals + augmentation, NB10) only *ties* the feature-based model — at this data scale, engineered features win.
+
+**Limitation:** all recordings come from a single subject. Cross-session LOSO is a proxy for generalisation, not a substitute for cross-subject validation.
+
+---
+
+## Live App
+
+```bash
+pip install -r requirements.txt
+python ml_httpstreaming/classifier_app.py
+```
+
+The app trains both model sets on startup, then serves on port 8000:
+
+- Web UI — `http://<host>:8000/`
+- Sensor stream — `POST http://<host>:8000/data` (Sensor Logger HTTP push)
+
+It classifies every 2 s over a 10 s window and aggregates a meal by majority vote.
 
 ---
 
@@ -57,12 +105,22 @@ The pipeline has grown from a rough proof of concept into a working **2-stage hi
 
 ```
 data/raw/          Raw recordings (ZIP archives, one per session)
-notebooks/         Exploratory analysis & experiments
+notebooks/         Analysis & experiments (NB01–NB15)
 ml_httpstreaming/  Live real-time classification app
-reports/           Weekly progress reports
-results/           Plots and outputs from experiments
-src/               Preprocessing, training, and evaluation scripts
+reports/           Weekly progress reports, figures, final slides
+sources/           Reference papers
 ```
+
+### Key notebooks
+
+| Notebook | Purpose |
+|---|---|
+| [NB09](notebooks/09_feature_engineering.ipynb) | Feature engineering (chewing band 0.5–4 Hz) |
+| [NB10](notebooks/10_cnn_raw.ipynb) | 1D-CNN on raw signals vs. engineered features |
+| [NB11](notebooks/11_loso_feature_selection.ipynb) | Feature-selection experiment (BASE-36 / PLUS-52 / SELECTED) |
+| [NB13](notebooks/13_model_selection.ipynb) | Configuration comparison (movement exclusion on/off) |
+| [NB14](notebooks/14_feature_selection_s2.ipynb) | Validation of the Stage-2 feature set |
+| [NB15](notebooks/15_final_verification.ipynb) | **Final verification of the shipped configuration** |
 
 ---
 
@@ -71,6 +129,8 @@ src/               Preprocessing, training, and evaluation scripts
 ```bash
 pip install -r requirements.txt
 ```
+
+`torch` is only required for NB10; everything else runs without it.
 
 ---
 
@@ -82,3 +142,5 @@ pip install -r requirements.txt
 - [Week 7](reports/week07.md)
 - [Week 8](reports/week08.md)
 - [Week 9](reports/week09.md)
+- [Week 10](reports/week10.md)
+- [Week 11](reports/week11.md)
