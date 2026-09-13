@@ -1,7 +1,10 @@
 # ChewML — Food Classification via AirPod IMU
 
-**Semester project · Machine Learning for Smart and Connected Systems**  
-Jonah Karstens · Solo project
+**Semester project · Machine Learning for Smart and Connected Systems (ML4SCS)**  
+Leuphana Universität Lüneburg · Summer term 2026 · Jonah Karstens · Solo project
+
+**Final report:** [reports/Projektdokumentation_ChewML_final_karstens.pdf](reports/Projektdokumentation_ChewML_final_karstens.pdf)  
+**Slides:** [final presentation](reports/chewML_Abschlusspräsentation_final_karstens.pdf) · [interim presentation](reports/chewML_Zwischenpräsentation_karstens.pdf)
 
 ---
 
@@ -40,6 +43,7 @@ Complete. The pipeline runs end to end, from a live sensor stream to a per-meal 
 | 2-stage model (Still vs. Eating → food type) | ✅ Random Forest + SVM |
 | Cross-session (LOSO) evaluation of the shipped config | ✅ NB15 |
 | Live real-time app (per-meal voting) | ✅ |
+| Written report & presentations | ✅ see top of page |
 | Multi-subject data & generalisation | ⏳ Open — the key remaining limitation |
 
 ---
@@ -92,12 +96,22 @@ pip install -r requirements.txt
 python ml_httpstreaming/classifier_app.py
 ```
 
-The app trains both model sets on startup, then serves on port 8000:
+The app trains both model sets on startup (with and without movement exclusion), then serves on port 8000:
 
 - Web UI — `http://<host>:8000/`
 - Sensor stream — `POST http://<host>:8000/data` (Sensor Logger HTTP push)
 
-It classifies every 2 s over a 10 s window and aggregates a meal by majority vote.
+It classifies every 2 s over the last 10 s of a 20 s ring buffer. A meal opens after 5 consecutive "eating" windows, closes after 3 consecutive "still" windows, and is labelled by majority vote over the windows in between. New recordings in `data/raw/` are picked up on the next start; the "Neu berechnen" button in the web UI only re-runs the evaluation.
+
+**No phone at hand?** Replay a recording into the running app:
+
+```bash
+python ml_httpstreaming/_replay_smoke.py data/raw/Apfel_19-2026-06-16_21-42-47.zip 30 1.0
+```
+
+Arguments: recording, seconds to stream, speed (`1.0` = real time).
+
+`sensor_server.py` is a standalone raw-data logger from the early project phase; it uses the same port and is not part of the classification pipeline.
 
 ---
 
@@ -105,32 +119,46 @@ It classifies every 2 s over a 10 s window and aggregates a meal by majority vot
 
 ```
 data/raw/          Raw recordings (ZIP archives, one per session)
-notebooks/         Analysis & experiments (NB01–NB15)
+notebooks/         Analysis & experiments (NB02–NB15)
 ml_httpstreaming/  Live real-time classification app
-reports/           Weekly progress reports, figures, final slides
-sources/           Reference papers
+reports/           Final report, presentations, weekly progress reports, figures
+sources/           Reference papers cited in the report
 ```
 
-### Key notebooks
+### Notebooks
 
-| Notebook | Purpose |
-|---|---|
-| [NB09](notebooks/09_feature_engineering.ipynb) | Feature engineering (chewing band 0.5–4 Hz) |
-| [NB10](notebooks/10_cnn_raw.ipynb) | 1D-CNN on raw signals vs. engineered features |
-| [NB11](notebooks/11_loso_feature_selection.ipynb) | Feature-selection experiment (BASE-36 / PLUS-52 / SELECTED) |
-| [NB13](notebooks/13_model_selection.ipynb) | Configuration comparison (movement exclusion on/off) |
-| [NB14](notebooks/14_feature_selection_s2.ipynb) | Validation of the Stage-2 feature set |
-| [NB15](notebooks/15_final_verification.ipynb) | **Final verification of the shipped configuration** |
+| Notebook | Purpose | Report |
+|---|---|---|
+| [NB02](notebooks/02_analysis.ipynb) | Baseline pipeline, filter experiments, movement exclusion | ch. 4 |
+| [NB03](notebooks/03_halved_sessions.ipynb) | Session halving and band-pass variants (side experiment) | — |
+| [NB04](notebooks/04_extended_classes.ipynb) | Hierarchical two-stage model | ch. 6.1 |
+| [NB05](notebooks/05_neural_network.ipynb)–[NB08](notebooks/08_10s_windows.ipynb) | Classifier comparison, SVM feature selection, window experiments | ch. 4.4, 6.2 |
+| [NB09](notebooks/09_feature_engineering.ipynb) | Chewing-dynamics features (chewing band 0.5–4 Hz) | ch. 5.2 |
+| [NB10](notebooks/10_cnn_raw.ipynb) | 1D-CNN on raw signals vs. engineered features | ch. 6.3 |
+| [NB11](notebooks/11_loso_feature_selection.ipynb) | LOSO-based feature-selection experiment | ch. 5.3 |
+| [NB12](notebooks/12_final_presentation.ipynb) | Compact end-to-end story for the final presentation | — |
+| [NB13](notebooks/13_model_selection.ipynb) | Configuration comparison (feature set × movement exclusion) | ch. 6.5 |
+| [NB14](notebooks/14_feature_selection_s2.ipynb) | Validation of the Stage-2 feature set | fig. 5.2 |
+| [NB15](notebooks/15_final_verification.ipynb) | **Final verification of the shipped configuration** | ch. 6.4 |
+
+NB05 and NB10 are stored without cell outputs; their results are documented in the report figures.
 
 ---
 
 ## Setup
 
+Verified with Python 3.14 on Windows 11.
+
 ```bash
 pip install -r requirements.txt
 ```
 
-`torch` is only required for NB10; everything else runs without it.
+`torch` is only required for NB10; everything else runs without it. To execute a notebook headlessly:
+
+```bash
+cd notebooks
+python -m nbconvert --to notebook --execute --inplace 15_final_verification.ipynb
+```
 
 ---
 
