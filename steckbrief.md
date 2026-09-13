@@ -15,6 +15,7 @@ repo: "https://github.com/karstensjonah-design/ML4CS-group-ChewML"
 zustimmung_veroeffentlichung: "ja"
 ---
 [Live-Demo der Webanwendung: Klassifikation beim Kaugummikauen und im Ruhezustand](https://www.youtube.com/watch?v=APkBl8B37zE)
+
 [Vorstellungsvideo von ChewML (2 min)](https://www.youtube.com/watch?v=n9Op2ja_2zE)
 
 Das Projekt untersucht, ob sich Lebensmittel allein aus den Bewegungssensoren

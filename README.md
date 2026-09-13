@@ -4,7 +4,8 @@
 Leuphana Universität Lüneburg · Summer term 2026 · Jonah Karstens · Solo project
 
 **Final report:** [reports/Projektdokumentation_ChewML_final_karstens.pdf](reports/Projektdokumentation_ChewML_final_karstens.pdf)  
-**Slides:** [final presentation](reports/chewML_Abschlusspräsentation_final_karstens.pdf) · [interim presentation](reports/chewML_Zwischenpräsentation_karstens.pdf)
+**Slides:** [final presentation](reports/chewML_Abschlusspräsentation_final_karstens.pdf) · [interim presentation](reports/chewML_Zwischenpräsentation_karstens.pdf)  
+**Videos:** [live demo of the app](https://www.youtube.com/watch?v=APkBl8B37zE) · [2-minute project intro](https://www.youtube.com/watch?v=n9Op2ja_2zE)
 
 ---
 
