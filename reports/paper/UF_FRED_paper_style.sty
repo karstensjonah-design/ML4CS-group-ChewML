@@ -1,0 +1,36 @@
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}   % Umlaute als echte Glyphen: kopierbar, durchsuchbar, trennbar
+\usepackage{hyperref}
+\usepackage{setspace}
+\usepackage{palatino}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{titling} % drop vertical space before the title
+\usepackage{multirow}
+\usepackage{lscape}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{subcaption}
+\usepackage[a4paper, total={6in, 9.5in}]{geometry}
+\fontfamily{ppl}\selectfont 
+
+%% Deutsche Silbentrennung, falls verfuegbar (z. B. Overleaf);
+%% sonst Trennung aus und weichere Umbruchregeln, damit nichts in den Rand laeuft.
+\IfFileExists{ngerman.ldf}{%
+  \usepackage[ngerman]{babel}%
+}{%
+  \usepackage[american]{babel}%
+  \hyphenpenalty=10000 \exhyphenpenalty=10000%
+}
+\tolerance=3000
+\emergencystretch=3em
+\hbadness=10000
+
+
+\usepackage{setspace}
+\renewcommand{\baselinestretch}{1.5} 
+
+% BIBLIOGRAPHY %%%%%%%%%%%%%%
+\usepackage[authoryear,round]{natbib}
+\bibliographystyle{apalike}
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%

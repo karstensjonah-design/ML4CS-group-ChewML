@@ -3,7 +3,7 @@
 **Semester project · Machine Learning for Smart and Connected Systems (ML4SCS)**  
 Leuphana Universität Lüneburg · Summer term 2026 · Jonah Karstens · Solo project
 
-**Final report:** [reports/Projektdokumentation_ChewML_final_karstens.pdf](reports/Projektdokumentation_ChewML_final_karstens.pdf)  
+**Paper:** [reports/ChewML_Paper_Karstens.pdf](reports/ChewML_Paper_Karstens.pdf) · LaTeX source in [reports/paper/](reports/paper/)  
 **Slides:** [final presentation](reports/chewML_Abschlusspräsentation_final_karstens.pdf) · [interim presentation](reports/chewML_Zwischenpräsentation_karstens.pdf)  
 **Videos:** [live demo of the app](https://www.youtube.com/watch?v=APkBl8B37zE) · [2-minute project intro](https://www.youtube.com/watch?v=n9Op2ja_2zE)
 
@@ -122,27 +122,27 @@ Arguments: recording, seconds to stream, speed (`1.0` = real time).
 data/raw/          Raw recordings (ZIP archives, one per session)
 notebooks/         Analysis & experiments (NB02–NB15)
 ml_httpstreaming/  Live real-time classification app
-reports/           Final report, presentations, weekly progress reports, figures
+reports/           Paper (PDF + LaTeX source), presentations, weekly progress reports, figures
 sources/           Reference papers cited in the report
 ```
 
 ### Notebooks
 
-| Notebook | Purpose | Report |
+| Notebook | Purpose | Paper |
 |---|---|---|
-| [NB02](notebooks/02_analysis.ipynb) | Baseline pipeline, filter experiments, movement exclusion | ch. 4 |
+| [NB02](notebooks/02_analysis.ipynb) | Baseline pipeline, filter experiments, movement exclusion | sec. 3.2 |
 | [NB03](notebooks/03_halved_sessions.ipynb) | Session halving and band-pass variants (side experiment) | — |
-| [NB04](notebooks/04_extended_classes.ipynb) | Hierarchical two-stage model | ch. 6.1 |
-| [NB05](notebooks/05_neural_network.ipynb)–[NB08](notebooks/08_10s_windows.ipynb) | Classifier comparison, SVM feature selection, window experiments | ch. 4.4, 6.2 |
-| [NB09](notebooks/09_feature_engineering.ipynb) | Chewing-dynamics features (chewing band 0.5–4 Hz) | ch. 5.2 |
-| [NB10](notebooks/10_cnn_raw.ipynb) | 1D-CNN on raw signals vs. engineered features | ch. 6.3 |
-| [NB11](notebooks/11_loso_feature_selection.ipynb) | LOSO-based feature-selection experiment | ch. 5.3 |
+| [NB04](notebooks/04_extended_classes.ipynb) | Hierarchical two-stage model | sec. 3.4 |
+| [NB05](notebooks/05_neural_network.ipynb)–[NB08](notebooks/08_10s_windows.ipynb) | Classifier comparison, SVM feature selection, window experiments | sec. 3.2, 4.3 |
+| [NB09](notebooks/09_feature_engineering.ipynb) | Chewing-dynamics features (chewing band 0.5–4 Hz) | sec. 3.3 |
+| [NB10](notebooks/10_cnn_raw.ipynb) | 1D-CNN on raw signals vs. engineered features | sec. 4.3 |
+| [NB11](notebooks/11_loso_feature_selection.ipynb) | LOSO-based feature-selection experiment | sec. 3.3 |
 | [NB12](notebooks/12_final_presentation.ipynb) | Compact end-to-end story for the final presentation | — |
-| [NB13](notebooks/13_model_selection.ipynb) | Configuration comparison (feature set × movement exclusion) | ch. 6.5 |
-| [NB14](notebooks/14_feature_selection_s2.ipynb) | Validation of the Stage-2 feature set | fig. 5.2 |
-| [NB15](notebooks/15_final_verification.ipynb) | **Final verification of the shipped configuration** | ch. 6.4 |
+| [NB13](notebooks/13_model_selection.ipynb) | Configuration comparison (feature set × movement exclusion) | sec. 4.2 |
+| [NB14](notebooks/14_feature_selection_s2.ipynb) | Validation of the Stage-2 feature set | fig. 4 |
+| [NB15](notebooks/15_final_verification.ipynb) | **Final verification of the shipped configuration** | sec. 4.1 |
 
-NB05 and NB10 are stored without cell outputs; their results are documented in the report figures.
+NB05 and NB10 are stored without cell outputs; their results are documented in the paper figures.
 
 ---
 
