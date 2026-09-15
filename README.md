@@ -165,7 +165,6 @@ python -m nbconvert --to notebook --execute --inplace 15_final_verification.ipyn
 
 ## Weekly Reports
 
-- [Week 1](reports/week01.md)
 - [Week 5](reports/week05.md)
 - [Week 6](reports/week06.md)
 - [Week 7](reports/week07.md)
